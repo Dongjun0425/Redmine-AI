@@ -1,0 +1,9 @@
+backend/.env
+backend/.venv/
+backend/__pycache__/
+**/__pycache__/
+*.pyc
+android/.gradle/
+android/build/
+android/app/build/
+android/local.properties

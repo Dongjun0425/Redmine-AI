@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Redmine AI 검색</title>
+<style>
+  :root {
+    --bg: #f5f6f8;
+    --surface: #ffffff;
+    --border: #e2e5ea;
+    --text: #1f2430;
+    --text-muted: #6b7280;
+    --accent: #4f6df5;
+    --accent-dark: #3a54d6;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: "맑은 고딕", "Segoe UI", sans-serif;
+    background: var(--bg);
+    color: var(--text);
+  }
+  .wrap {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 32px 16px 80px;
+  }
+  h1 {
+    font-size: 20px;
+    margin: 0 0 4px;
+  }
+  .subtitle {
+    color: var(--text-muted);
+    font-size: 13px;
+    margin: 0 0 20px;
+  }
+  .search-box {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  textarea {
+    width: 100%;
+    border: none;
+    resize: none;
+    font-size: 15px;
+    font-family: inherit;
+    outline: none;
+    min-height: 52px;
+    background: transparent;
+    color: var(--text);
+  }
+  .toolbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-top: 8px;
+    gap: 8px;
+  }
+  select {
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 7px 10px;
+    font-size: 13px;
+    background: var(--surface);
+    color: var(--text);
+  }
+  button#searchBtn {
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 9px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  button#searchBtn:hover { background: var(--accent-dark); }
+  button#searchBtn:disabled { background: #b9c1d9; cursor: default; }
+
+  .status {
+    margin: 16px 4px;
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+  .results { display: flex; flex-direction: column; gap: 10px; }
+  .card {
+    display: block;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    text-decoration: none;
+    color: inherit;
+  }
+  .card:hover { border-color: var(--accent); }
+  .card .top {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 8px;
+    margin-bottom: 4px;
+  }
+  .card .project {
+    font-size: 11px;
+    color: var(--accent-dark);
+    background: #eef1ff;
+    border-radius: 6px;
+    padding: 2px 7px;
+    white-space: nowrap;
+  }
+  .card .subject {
+    font-size: 15px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+  .card .snippet {
+    font-size: 13px;
+    color: var(--text-muted);
+    line-height: 1.5;
+    margin: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+  }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>🔍 Redmine AI 검색</h1>
+  <p class="subtitle">단어든 문장이든 편하게 입력하세요. 의미가 비슷한 게시물까지 찾아드려요.</p>
+
+  <div class="search-box">
+    <textarea id="queryInput" placeholder="예) 나 지금 프린터 관련 내역 처리중인데 관련 게시물 보여줘"></textarea>
+    <div class="toolbar">
+      <select id="projectSelect">
+        <option value="">전체 프로젝트</option>
+      </select>
+      <button id="searchBtn">검색</button>
+    </div>
+  </div>
+
+  <div id="status" class="status"></div>
+  <div id="results" class="results"></div>
+</div>
+
+<script>
+  // 배포된 백엔드 주소로 바꿔서 쓰세요. 로컬 테스트 중에는 로컬 서버를 가리킵니다.
+  const API_BASE = "http://127.0.0.1:8000";
+  const APP_TOKEN = "redmine-search-local-dev-token";
+
+  const queryInput = document.getElementById("queryInput");
+  const projectSelect = document.getElementById("projectSelect");
+  const searchBtn = document.getElementById("searchBtn");
+  const statusEl = document.getElementById("status");
+  const resultsEl = document.getElementById("results");
+
+  async function apiGet(path, params) {
+    const url = new URL(API_BASE + path);
+    Object.entries(params || {}).forEach(([k, v]) => {
+      if (v !== null && v !== undefined && v !== "") url.searchParams.set(k, v);
+    });
+    const res = await fetch(url, { headers: { "x-app-token": APP_TOKEN } });
+    if (!res.ok) throw new Error("서버 오류 (" + res.status + ")");
+    return res.json();
+  }
+
+  async function loadProjects() {
+    try {
+      const projects = await apiGet("/projects");
+      for (const p of projects) {
+        const opt = document.createElement("option");
+        opt.value = p.project_id;
+        opt.textContent = p.project_name;
+        projectSelect.appendChild(opt);
+      }
+    } catch (e) {
+      console.error("프로젝트 목록을 불러오지 못했습니다", e);
+    }
+  }
+
+  function renderResults(items) {
+    resultsEl.innerHTML = "";
+    if (!items.length) {
+      statusEl.textContent = "관련된 게시물을 찾지 못했어요.";
+      return;
+    }
+    statusEl.textContent = `${items.length}건 찾았어요.`;
+    for (const item of items) {
+      const a = document.createElement("a");
+      a.className = "card";
+      a.href = item.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.innerHTML = `
+        <div class="top">
+          <span class="project">${item.project_name}</span>
+        </div>
+        <p class="subject">${item.subject}</p>
+        <p class="snippet">${item.snippet}</p>
+      `;
+      resultsEl.appendChild(a);
+    }
+  }
+
+  async function runSearch() {
+    const q = queryInput.value.trim();
+    if (!q) return;
+
+    searchBtn.disabled = true;
+    statusEl.textContent = "검색 중...";
+    resultsEl.innerHTML = "";
+
+    try {
+      const items = await apiGet("/search", {
+        q,
+        project_id: projectSelect.value || null,
+        limit: 30,
+      });
+      renderResults(items);
+    } catch (e) {
+      statusEl.textContent = "검색에 실패했어요: " + e.message;
+    } finally {
+      searchBtn.disabled = false;
+    }
+  }
+
+  searchBtn.addEventListener("click", runSearch);
+  queryInput.addEventListener("keydown", (e) => {
+    if (e.key === "Enter" && !e.shiftKey) {
+      e.preventDefault();
+      runSearch();
+    }
+  });
+
+  loadProjects();
+</script>
+</body>
+</html>

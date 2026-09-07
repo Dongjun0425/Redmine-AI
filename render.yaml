@@ -1,0 +1,19 @@
+services:
+  - type: web
+    name: redmine-ai-search-backend
+    env: python
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    envVars:
+      - key: REDMINE_BASE_URL
+        sync: false
+      - key: REDMINE_API_KEY
+        sync: false
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: SEARCH_APP_TOKEN
+        sync: false
+      - key: DATABASE_URL
+        sync: false
