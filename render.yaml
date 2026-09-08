@@ -13,7 +13,7 @@ services:
         sync: false
       - key: OPENAI_API_KEY
         sync: false
-      - key: SEARCH_APP_TOKEN
+      - key: SESSION_SECRET
         sync: false
       - key: DATABASE_URL
         sync: false

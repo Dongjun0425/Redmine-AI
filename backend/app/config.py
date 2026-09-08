@@ -16,8 +16,13 @@ REDMINE_BASE_URL = os.environ.get("REDMINE_BASE_URL", "https://issues.drbit.kr/r
 REDMINE_API_KEY = os.environ.get("REDMINE_API_KEY", "").strip()
 
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "").strip()
-SEARCH_APP_TOKEN = os.environ.get("SEARCH_APP_TOKEN", "").strip()
 DATABASE_URL = os.environ.get("DATABASE_URL", "").strip()
+# 로그인 세션 토큰 서명용 비밀키. openssl rand -hex 32 등으로 생성한 임의의 긴 문자열을 넣는다.
+SESSION_SECRET = os.environ.get("SESSION_SECRET", "").strip()
+
+
+def require_session_secret() -> str:
+    return _require("SESSION_SECRET")
 
 
 def require_redmine_api_key() -> str:

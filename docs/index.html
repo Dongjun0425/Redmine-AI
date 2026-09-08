@@ -13,6 +13,7 @@
     --text-muted: #6b7280;
     --accent: #4f6df5;
     --accent-dark: #3a54d6;
+    --danger: #d9534f;
   }
   * { box-sizing: border-box; }
   body {
@@ -21,6 +22,7 @@
     background: var(--bg);
     color: var(--text);
   }
+  [hidden] { display: none !important; }
   .wrap {
     max-width: 720px;
     margin: 0 auto;
@@ -35,6 +37,88 @@
     font-size: 13px;
     margin: 0 0 20px;
   }
+
+  /* 로그인 화면 */
+  .login-card {
+    max-width: 360px;
+    margin: 60px auto 0;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    padding: 28px 24px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+  }
+  .login-card h2 {
+    font-size: 17px;
+    margin: 0 0 4px;
+    text-align: center;
+  }
+  .login-card .hint {
+    color: var(--text-muted);
+    font-size: 12px;
+    text-align: center;
+    margin: 0 0 20px;
+  }
+  .field { margin-bottom: 12px; }
+  .field label {
+    display: block;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-bottom: 4px;
+  }
+  .field input {
+    width: 100%;
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+    font-size: 14px;
+    font-family: inherit;
+    outline: none;
+  }
+  .field input:focus { border-color: var(--accent); }
+  button.primary {
+    width: 100%;
+    background: var(--accent);
+    color: white;
+    border: none;
+    border-radius: 10px;
+    padding: 11px 18px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    margin-top: 6px;
+  }
+  button.primary:hover { background: var(--accent-dark); }
+  button.primary:disabled { background: #b9c1d9; cursor: default; }
+  .login-error {
+    color: var(--danger);
+    font-size: 13px;
+    margin-top: 10px;
+    text-align: center;
+    min-height: 18px;
+  }
+
+  /* 상단 사용자 바 */
+  .user-bar {
+    display: flex;
+    justify-content: flex-end;
+    align-items: center;
+    gap: 10px;
+    margin-bottom: 8px;
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+  .user-bar button {
+    background: none;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 4px 10px;
+    font-size: 12px;
+    color: var(--text-muted);
+    cursor: pointer;
+  }
+  .user-bar button:hover { border-color: var(--accent); color: var(--accent); }
+
   .search-box {
     background: var(--surface);
     border: 1px solid var(--border);
@@ -131,7 +215,33 @@
 </style>
 </head>
 <body>
-<div class="wrap">
+
+<!-- 로그인 화면 -->
+<div id="loginScreen" class="wrap">
+  <div class="login-card">
+    <h2>🔒 Redmine 로그인</h2>
+    <p class="hint">본인의 Redmine 아이디/비밀번호로 로그인하세요.</p>
+    <form id="loginForm">
+      <div class="field">
+        <label for="loginUsername">아이디</label>
+        <input id="loginUsername" type="text" autocomplete="username" required>
+      </div>
+      <div class="field">
+        <label for="loginPassword">비밀번호</label>
+        <input id="loginPassword" type="password" autocomplete="current-password" required>
+      </div>
+      <button type="submit" class="primary" id="loginBtn">로그인</button>
+      <div id="loginError" class="login-error"></div>
+    </form>
+  </div>
+</div>
+
+<!-- 검색 화면 -->
+<div id="appScreen" class="wrap" hidden>
+  <div class="user-bar">
+    <span id="userLabel"></span>
+    <button id="logoutBtn">로그아웃</button>
+  </div>
   <h1>🔍 Redmine AI 검색</h1>
   <p class="subtitle">단어든 문장이든 편하게 입력하세요. 의미가 비슷한 게시물까지 찾아드려요.</p>
 
@@ -151,7 +261,17 @@
 
 <script>
   const API_BASE = "https://redmine-ai-1.onrender.com";
-  const APP_TOKEN = "redmine-search-local-dev-token";
+  const TOKEN_KEY = "redmine_ai_search_session";
+
+  const loginScreen = document.getElementById("loginScreen");
+  const appScreen = document.getElementById("appScreen");
+  const loginForm = document.getElementById("loginForm");
+  const loginUsername = document.getElementById("loginUsername");
+  const loginPassword = document.getElementById("loginPassword");
+  const loginBtn = document.getElementById("loginBtn");
+  const loginError = document.getElementById("loginError");
+  const userLabel = document.getElementById("userLabel");
+  const logoutBtn = document.getElementById("logoutBtn");
 
   const queryInput = document.getElementById("queryInput");
   const projectSelect = document.getElementById("projectSelect");
@@ -159,17 +279,51 @@
   const statusEl = document.getElementById("status");
   const resultsEl = document.getElementById("results");
 
+  function getSession() {
+    try {
+      return JSON.parse(localStorage.getItem(TOKEN_KEY) || "null");
+    } catch (e) {
+      return null;
+    }
+  }
+
+  function setSession(session) {
+    if (session) localStorage.setItem(TOKEN_KEY, JSON.stringify(session));
+    else localStorage.removeItem(TOKEN_KEY);
+  }
+
+  function showLogin(message) {
+    setSession(null);
+    appScreen.hidden = true;
+    loginScreen.hidden = false;
+    loginError.textContent = message || "";
+  }
+
+  function showApp(session) {
+    loginScreen.hidden = true;
+    appScreen.hidden = false;
+    userLabel.textContent = (session.name || session.login) + "님";
+  }
+
   async function apiGet(path, params) {
+    const session = getSession();
     const url = new URL(API_BASE + path);
     Object.entries(params || {}).forEach(([k, v]) => {
       if (v !== null && v !== undefined && v !== "") url.searchParams.set(k, v);
     });
-    const res = await fetch(url, { headers: { "x-app-token": APP_TOKEN } });
+    const res = await fetch(url, {
+      headers: { "Authorization": "Bearer " + (session ? session.token : "") },
+    });
+    if (res.status === 401) {
+      showLogin("세션이 만료되었어요. 다시 로그인해주세요.");
+      throw new Error("세션 만료");
+    }
     if (!res.ok) throw new Error("서버 오류 (" + res.status + ")");
     return res.json();
   }
 
   async function loadProjects() {
+    projectSelect.innerHTML = '<option value="">전체 프로젝트</option>';
     try {
       const projects = await apiGet("/projects");
       for (const p of projects) {
@@ -223,12 +377,51 @@
       });
       renderResults(items);
     } catch (e) {
-      statusEl.textContent = "검색에 실패했어요: " + e.message;
+      if (e.message !== "세션 만료") statusEl.textContent = "검색에 실패했어요: " + e.message;
     } finally {
       searchBtn.disabled = false;
     }
   }
 
+  async function handleLogin(e) {
+    e.preventDefault();
+    loginError.textContent = "";
+    loginBtn.disabled = true;
+    loginBtn.textContent = "로그인 중...";
+    try {
+      const res = await fetch(API_BASE + "/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: loginUsername.value.trim(),
+          password: loginPassword.value,
+        }),
+      });
+      if (!res.ok) {
+        const data = await res.json().catch(() => ({}));
+        throw new Error(data.detail || "로그인에 실패했어요.");
+      }
+      const session = await res.json();
+      setSession(session);
+      loginPassword.value = "";
+      showApp(session);
+      loadProjects();
+    } catch (e) {
+      loginError.textContent = e.message;
+    } finally {
+      loginBtn.disabled = false;
+      loginBtn.textContent = "로그인";
+    }
+  }
+
+  function handleLogout() {
+    showLogin();
+    loginUsername.value = "";
+    loginPassword.value = "";
+  }
+
+  loginForm.addEventListener("submit", handleLogin);
+  logoutBtn.addEventListener("click", handleLogout);
   searchBtn.addEventListener("click", runSearch);
   queryInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -237,7 +430,14 @@
     }
   });
 
-  loadProjects();
+  // 시작 시: 저장된 세션이 있으면 바로 검색 화면으로, 없으면 로그인 화면
+  const existing = getSession();
+  if (existing) {
+    showApp(existing);
+    loadProjects();
+  } else {
+    showLogin();
+  }
 </script>
 </body>
 </html>

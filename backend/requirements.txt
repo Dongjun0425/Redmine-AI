@@ -7,3 +7,4 @@ pgvector>=0.3
 openai>=1.40
 apscheduler>=3.10
 tiktoken>=0.7
+pyjwt>=2.9
