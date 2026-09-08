@@ -1,0 +1,14 @@
+name: Keep backend awake
+
+on:
+  schedule:
+    # Render 무료 플랜은 15분간 요청이 없으면 잠드므로, 그보다 짧은 주기로 깨워둔다.
+    - cron: "*/10 * * * *"
+  workflow_dispatch: {}
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping health endpoint
+        run: curl -sf https://redmine-ai-1.onrender.com/health
