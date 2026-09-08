@@ -147,6 +147,75 @@ def _keyword_pipeline(query: str, project_id: int | None, limit: int) -> tuple[l
     return keywords, _keyword_search(keywords, project_id, limit)
 
 
+JUDGE_MODEL = "gpt-4o-mini"
+JUDGE_POOL_SIZE = 80
+# 키워드/임베딩 각각의 1차 후보 검색 폭. 이게 너무 좁으면, 점수는 낮지만 실제로
+# 정답인 게시물이 후보에도 못 들어가서 마지막 AI 판단 단계까지 갈 기회조차 없어진다.
+RETRIEVAL_POOL_SIZE = 150
+
+JUDGE_PROMPT = """당신은 사내 Redmine 이슈 검색을 돕는 도우미입니다.
+아래는 사용자의 질문과, 후보로 뽑힌 게시물 목록(번호, 프로젝트, 제목, 요약)입니다.
+
+같은 대상/기능이라도 게시물마다 서로 다른 용어(제품명·브랜드명·별칭·줄임말 등)로 표현되는 경우가
+아주 흔합니다. 문자 그대로 일치하지 않아도, 실제로 사용자의 질문과 같은 주제/요청을 다루는
+게시물이면 "관련 있음"으로 판단하세요. 반대로 겉보기엔 비슷한 단어가 섞여 있어도 실제 요청 내용이
+다르면(예: 같은 장비의 전혀 다른 문제) "관련 없음"으로 제외하세요.
+
+사용자 질문: "{query}"
+
+후보 게시물:
+{candidates_block}
+
+정말 관련 있는 게시물의 번호만, 관련도가 높은 순서로 JSON 배열로 응답하세요. 예: [3, 1, 7]
+관련 있는 게시물이 하나도 없으면 빈 배열 []을 응답하세요. 번호 외의 설명은 절대 붙이지 마세요.
+"""
+
+
+def _judge_relevance(query: str, candidates: list[dict]) -> list[int] | None:
+    """후보 게시물들을 실제로 사용자 질문과 관련 있는지 AI가 판단해서, 관련 있는 것만
+    관련도 순으로 골라낸다. 판단 자체가 실패하면(파싱 오류 등) None을 반환해서
+    호출 쪽에서 기존 점수 순서로 대체할 수 있게 한다."""
+    if not candidates:
+        return []
+
+    lines = []
+    for idx, c in enumerate(candidates, start=1):
+        lines.append(
+            f"{idx}. [{c['project_name']}] {c['subject']} - {_snippet(c['raw_text'], 120)}"
+        )
+    candidates_block = "\n".join(lines)
+
+    try:
+        resp = _get_client().chat.completions.create(
+            model=JUDGE_MODEL,
+            messages=[
+                {
+                    "role": "user",
+                    "content": JUDGE_PROMPT.format(query=query, candidates_block=candidates_block),
+                }
+            ],
+            temperature=0,
+        )
+        text = (resp.choices[0].message.content or "").strip().strip("`")
+        if text.lower().startswith("json"):
+            text = text[4:].strip()
+        order = json.loads(text)
+        if not isinstance(order, list):
+            return None
+
+        indices: list[int] = []
+        for n in order:
+            try:
+                i = int(n) - 1
+            except (TypeError, ValueError):
+                continue
+            if 0 <= i < len(candidates) and i not in indices:
+                indices.append(i)
+        return indices
+    except Exception:
+        return None
+
+
 def search(query: str, project_id: int | None = None, limit: int = 30) -> list[dict]:
     query = (query or "").strip()
     if not query:
@@ -154,9 +223,10 @@ def search(query: str, project_id: int | None = None, limit: int = 30) -> list[d
 
     # 키워드 추출(LLM 호출)+키워드 검색과, 임베딩 검색은 서로 결과를 필요로 하지 않으므로
     # 동시에 실행해서 전체 응답 시간을 줄인다(직렬로 하면 두 배 가까이 걸림).
+    pool_size = max(limit * 2, RETRIEVAL_POOL_SIZE)
     with ThreadPoolExecutor(max_workers=2) as executor:
-        kw_future = executor.submit(_keyword_pipeline, query, project_id, limit * 2)
-        emb_future = executor.submit(_embedding_search, query, project_id, limit * 2)
+        kw_future = executor.submit(_keyword_pipeline, query, project_id, pool_size)
+        emb_future = executor.submit(_embedding_search, query, project_id, pool_size)
         keywords, kw_results = kw_future.result()
         emb_results = emb_future.result()
 
@@ -173,7 +243,14 @@ def search(query: str, project_id: int | None = None, limit: int = 30) -> list[d
         else:
             merged[row["id"]] = {**row, "score": similarity, "matched_by": "embedding"}
 
-    ranked = sorted(merged.values(), key=lambda r: r["score"], reverse=True)[:limit]
+    ranked = sorted(merged.values(), key=lambda r: r["score"], reverse=True)[:JUDGE_POOL_SIZE]
+
+    # 점수만으로는 "관련 주제라 걸린 것"과 "진짜 원하는 그 건"을 구분 못 하므로,
+    # 후보 제목/요약을 AI에게 보여주고 실제로 관련 있는 것만 골라내게 한다.
+    order = _judge_relevance(query, ranked)
+    judged = ranked if order is None else [ranked[i] for i in order]
+    judged = judged[:limit]
+
     return [
         {
             "id": r["id"],
@@ -185,5 +262,5 @@ def search(query: str, project_id: int | None = None, limit: int = 30) -> list[d
             "score": round(float(r["score"]), 4),
             "matched_by": r["matched_by"],
         }
-        for r in ranked
+        for r in judged
     ]
