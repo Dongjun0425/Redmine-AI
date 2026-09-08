@@ -4,6 +4,8 @@
 """
 from __future__ import annotations
 
+import html as html_module
+import re
 from typing import Iterator
 
 import requests
@@ -12,6 +14,21 @@ from . import config
 
 PAGE_SIZE = 100
 TIMEOUT = 30
+
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"[ \t]+")
+
+
+def _strip_html(text: str | None) -> str:
+    """CKEditor 등으로 작성된 설명/댓글에 섞여있는 HTML 태그(이미지 태그 포함)를 제거하고
+    순수 텍스트만 남긴다. 이걸 안 하면 <img> 태그가 검색 결과 카드에 그대로 끼어들어가
+    (상대경로라 우리 페이지 기준으로) 깨진 이미지로 보이고, 검색/임베딩 품질도 떨어진다."""
+    if not text:
+        return ""
+    text = _TAG_RE.sub(" ", text)
+    text = html_module.unescape(text)
+    text = _WS_RE.sub(" ", text)
+    return text.strip()
 
 
 def _headers() -> dict:
@@ -59,10 +76,13 @@ def fetch_issues(updated_since: str | None = None) -> Iterator[dict]:
 
 
 def issue_to_searchable_text(issue: dict) -> str:
-    """제목 + 본문 + 댓글(작업 내역)을 하나의 검색용 텍스트로 합친다."""
-    parts = [issue.get("subject", ""), issue.get("description", "") or ""]
+    """제목 + 본문 + 댓글(작업 내역)을 하나의 검색용 텍스트로 합친다. (HTML 태그는 제거)"""
+    parts = [
+        _strip_html(issue.get("subject", "")),
+        _strip_html(issue.get("description", "")),
+    ]
     for journal in issue.get("journals", []):
-        note = journal.get("notes")
+        note = _strip_html(journal.get("notes"))
         if note:
             parts.append(note)
     return "\n".join(p for p in parts if p)

@@ -345,18 +345,32 @@
     }
     statusEl.textContent = `${items.length}건 찾았어요.`;
     for (const item of items) {
+      // 게시물 내용에 <img> 등 HTML 태그가 섞여 있을 수 있어서, innerHTML이 아니라
+      // textContent로만 넣어 실제 태그가 절대 렌더링(및 깨진 이미지로 표시)되지 않게 한다.
       const a = document.createElement("a");
       a.className = "card";
       a.href = item.url;
       a.target = "_blank";
       a.rel = "noopener";
-      a.innerHTML = `
-        <div class="top">
-          <span class="project">${item.project_name}</span>
-        </div>
-        <p class="subject">${item.subject}</p>
-        <p class="snippet">${item.snippet}</p>
-      `;
+
+      const top = document.createElement("div");
+      top.className = "top";
+      const projectSpan = document.createElement("span");
+      projectSpan.className = "project";
+      projectSpan.textContent = item.project_name;
+      top.appendChild(projectSpan);
+
+      const subjectP = document.createElement("p");
+      subjectP.className = "subject";
+      subjectP.textContent = item.subject;
+
+      const snippetP = document.createElement("p");
+      snippetP.className = "snippet";
+      snippetP.textContent = item.snippet;
+
+      a.appendChild(top);
+      a.appendChild(subjectP);
+      a.appendChild(snippetP);
       resultsEl.appendChild(a);
     }
   }
