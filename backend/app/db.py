@@ -43,6 +43,17 @@ CREATE INDEX IF NOT EXISTS issues_subject_trgm_idx
     ON issues USING gin (subject gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS issues_raw_text_trgm_idx
     ON issues USING gin (raw_text gin_trgm_ops);
+
+-- 게시물 전체에서 "자주 같이 쓰이는 단어" 통계(예: 지원부서 <-> 참고치/상한치/하한치)를
+-- 저장해서, 검색어 하나를 입력해도 실제로 같이 쓰이는 관련 단어까지 알아서 넓혀 찾게 한다.
+CREATE TABLE IF NOT EXISTS term_associations (
+    term TEXT NOT NULL,
+    related_term TEXT NOT NULL,
+    score DOUBLE PRECISION NOT NULL,
+    cooccur_count INTEGER NOT NULL,
+    PRIMARY KEY (term, related_term)
+);
+CREATE INDEX IF NOT EXISTS term_associations_term_idx ON term_associations (term);
 """
 
 _pool: ConnectionPool | None = None
@@ -141,3 +152,24 @@ def list_projects() -> list[dict]:
             "SELECT DISTINCT project_id, project_name FROM issues ORDER BY project_name"
         ).fetchall()
         return [{"project_id": r[0], "project_name": r[1]} for r in rows]
+
+
+def get_related_terms(terms: list[str], limit_per_term: int = 5) -> list[str]:
+    """게시물 전체 통계상 이 단어(들)와 자주 같이 쓰인 단어들을 가져온다."""
+    if not terms:
+        return []
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT DISTINCT related_term
+            FROM (
+                SELECT related_term,
+                       row_number() OVER (PARTITION BY term ORDER BY score DESC) AS rn
+                FROM term_associations
+                WHERE term = ANY(%s)
+            ) ranked
+            WHERE rn <= %s
+            """,
+            (terms, limit_per_term),
+        ).fetchall()
+        return [r[0] for r in rows]

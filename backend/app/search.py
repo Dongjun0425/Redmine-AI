@@ -152,9 +152,17 @@ def _snippet(text: str, length: int = 160) -> str:
     return text[:length] + ("..." if len(text) > length else "")
 
 
+RELATED_TERMS_PER_KEYWORD = 5
+
+
 def _keyword_pipeline(query: str, project_id: int | None, limit: int) -> tuple[list[str], list[dict]]:
     keywords = extract_keywords(query)
-    return keywords, _keyword_search(keywords, project_id, limit)
+    # 게시물 전체 통계에서 학습해 둔 "자주 같이 쓰이는 단어"(예: 지원부서 <-> 참고치/
+    # 상한치/하한치)도 검색 키워드에 추가한다. 사람이 일일이 알려주지 않아도, 기존 게시물
+    # 데이터 안에서 자동으로 찾아낸 연관어라 모든 주제에 똑같이 적용된다.
+    related = db.get_related_terms(keywords, limit_per_term=RELATED_TERMS_PER_KEYWORD)
+    expanded = keywords + [t for t in related if t not in keywords]
+    return expanded, _keyword_search(expanded, project_id, limit)
 
 
 JUDGE_MODEL = "gpt-4o-mini"
