@@ -37,7 +37,7 @@ def verify_redmine_credentials(username: str, password: str) -> dict | None:
 
 def issue_session_token(user: dict) -> str:
     payload = {
-        "sub": user["id"],
+        "sub": str(user["id"]),
         "login": user.get("login", ""),
         "name": f"{user.get('firstname', '')} {user.get('lastname', '')}".strip(),
         "exp": int(time.time()) + TOKEN_TTL_SECONDS,
