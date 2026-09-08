@@ -9,7 +9,14 @@
 from __future__ import annotations
 
 import json
+from concurrent.futures import ThreadPoolExecutor
 
+# openai 패키지는 chat/embeddings 서브모듈을 첫 접근 시 지연 임포트(lazy import)한다.
+# 아래에서 키워드추출(chat)과 임베딩을 스레드 2개로 동시에 돌리는데, 두 서브모듈을
+# 여러 스레드가 동시에 "처음" 임포트하면 파이썬 임포트 락끼리 걸려 교착상태(deadlock)가
+# 날 수 있다. 그래서 프로세스 시작 시점(단일 스레드)에 미리 로드해 둔다.
+import openai.resources.chat  # noqa: F401
+import openai.resources.embeddings  # noqa: F401
 from openai import OpenAI
 
 from . import config, db, embeddings
@@ -135,14 +142,23 @@ def _snippet(text: str, length: int = 160) -> str:
     return text[:length] + ("..." if len(text) > length else "")
 
 
+def _keyword_pipeline(query: str, project_id: int | None, limit: int) -> tuple[list[str], list[dict]]:
+    keywords = extract_keywords(query)
+    return keywords, _keyword_search(keywords, project_id, limit)
+
+
 def search(query: str, project_id: int | None = None, limit: int = 30) -> list[dict]:
     query = (query or "").strip()
     if not query:
         return []
 
-    keywords = extract_keywords(query)
-    kw_results = _keyword_search(keywords, project_id, limit=limit * 2)
-    emb_results = _embedding_search(query, project_id, limit=limit * 2)
+    # 키워드 추출(LLM 호출)+키워드 검색과, 임베딩 검색은 서로 결과를 필요로 하지 않으므로
+    # 동시에 실행해서 전체 응답 시간을 줄인다(직렬로 하면 두 배 가까이 걸림).
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        kw_future = executor.submit(_keyword_pipeline, query, project_id, limit * 2)
+        emb_future = executor.submit(_embedding_search, query, project_id, limit * 2)
+        keywords, kw_results = kw_future.result()
+        emb_results = emb_future.result()
 
     max_possible_score = max(len(keywords) * 3, 1)  # 키워드당 최대 2(제목)+1(본문) = 3점
     merged: dict[int, dict] = {}

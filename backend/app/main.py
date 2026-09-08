@@ -41,6 +41,7 @@ async def lifespan(_app: FastAPI):
         yield
     finally:
         scheduler.shutdown(wait=False)
+        db.close_pool()
 
 
 app = FastAPI(title="Redmine AI 검색", lifespan=lifespan)
