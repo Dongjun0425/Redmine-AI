@@ -1,13 +1,48 @@
 """검색 API 서버. 웹페이지/안드로이드 앱이 여기에 요청을 보낸다."""
 from __future__ import annotations
 
+import logging
+from contextlib import asynccontextmanager
+from datetime import datetime, timedelta
+
+from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Header, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 
 from . import config, db
 from . import search as search_module
+from . import sync as sync_module
 
-app = FastAPI(title="Redmine AI 검색")
+logger = logging.getLogger("uvicorn.error")
+
+SYNC_INTERVAL_MINUTES = 10
+
+
+def _run_incremental_sync() -> None:
+    try:
+        n = sync_module.run_sync(full=False)
+        logger.info("[auto-sync] %d건 처리", n)
+    except Exception:
+        logger.exception("[auto-sync] 실패")
+
+
+@asynccontextmanager
+async def lifespan(_app: FastAPI):
+    scheduler = BackgroundScheduler()
+    scheduler.add_job(
+        _run_incremental_sync,
+        "interval",
+        minutes=SYNC_INTERVAL_MINUTES,
+        next_run_time=datetime.now() + timedelta(seconds=30),
+    )
+    scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
+
+
+app = FastAPI(title="Redmine AI 검색", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
